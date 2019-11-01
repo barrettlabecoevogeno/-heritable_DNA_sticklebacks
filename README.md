@@ -1,4 +1,4 @@
-# Heritable_DNA_sticklebacks
+# Heritable_DNA_methylation_sticklebacks
 
 # This folder contains all R codes and cytosine coverage files (.cov) extracted using Bismark. All codes and files are used for analyzing # heritable DNA methylation in the stickleback study
 
