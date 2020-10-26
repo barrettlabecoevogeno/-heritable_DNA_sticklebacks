@@ -124,7 +124,7 @@ GTest(x=observed,
 
 # G = 0.0012108, X-squared df = 1, p-value = 0.9722
 
-# For ploting purpose
+# For heatmap ploting purpose
 # get methylation percentage for all CpG sites
 DMCs=regionCounts(meth, regions = as(myDiff.sig.marine_vs_fresh, "GRanges"))
 perc.DMCs=percMethylation(DMCs)
@@ -137,7 +137,7 @@ rownames(sampleinfo)=colnames(perc.DMCs)
 # levels(sampleinfo$Habitat)[2]="Freshwater"
 ann_colors=list(Habitat=c(Marine="#00BFC4", Fresh="#F8766D"),
                 Line=c(BI="#000000", HL="#CCCCCC", KL="#999999"))
-pheatmap(perc.DMCs, 
+p.heatmap=pheatmap(perc.DMCs, 
          cluster_rows=TRUE, 
          show_rownames=FALSE,
          show_colnames = FALSE,
@@ -160,6 +160,113 @@ write.table(dmcs_loc[,1:3], "./dmcs_parental.txt", sep = "\t", row.names = F, co
 all_filtered_cpgs=getData(unite_norm_10x_CT_GA_nosex_DB)
 all_filtered_cpgs$chr=as.character(all_filtered_cpgs$chr)
 write.table(all_filtered_cpgs[,1:2], "/Volumes/Epiguru/Thesis chapters/final version of each chapter with analysis/sticklbeack/submission to Genetics/all_filtered_CpGs.txt", sep = "\t", row.names = F, col.names = F, quote = F)
+
+# Next check the overlap with genomic elements
+# First build a reference for all genomic elements in stickleback
+# read the gene BED file, prodduced by gfftToGenePred and genePredtoBed, use stickleback gff3 file as input
+library(genomation)
+gene.obj=readTranscriptFeatures(location = "~/Downloads/1st revision/submission to Genetics/p_ecotypes/stickle.bed")
+# replace seqlevels in gene.obj
+seqlevels(gene.obj)=gsub("chr", "group", seqlevels(gene.obj))
+
+dmcs_loc_granges=as(dmcs_loc, "GRanges")
+# General distribution of all heritable sites
+Ann.DMCs=annotateWithGeneParts(dmcs_loc_granges, gene.obj)
+Ann.DMCs
+# promoter   exon       intron     intergenic 
+# 11.56      11.22      24.24      52.97 
+
+# Null distribution of all filtered CpG in the genome
+gCpG=read.table("./all_filtered_CpGs.txt", header = F) # 52,940 CpGs in total in the filtered CpG dataset
+gCpG$end=gCpG$V2
+colnames(gCpG)[1:2]=c("seqnames", "start")
+
+g.CpG=annotateWithGeneParts(as(gCpG, "GRanges"), gene.obj)
+g.CpG
+# 32.83, 8.90, 13.19, 45.07
+# promoter, exons, introns, intergenic regions
+
+library(ggplot2)
+library(broom)
+library(tidyverse)
+# Create test dat.alla, the null distribution percentage is from all filtered sites
+dat.all = data.frame(count=c(32.83, 8.90, 13.19, 45.07,
+                             11.56, 11.22, 24.24, 52.97),
+                     ring=c("A", "A","A","A", "B","B","B", "B"),
+                     Category=c("Promoters","Exons", "Introns", "Intergenic regions",
+                                "Promoters","Exons", "Introns", "Intergenic regions"))
+dat.all$Category=factor(dat.all$Category, levels = c("Promoters","Exons", "Introns", "Intergenic regions"), ordered = T)
+
+# compute fractions
+#dat.all = dat.all[order(dat.all$count), ]
+dat.all %<>% group_by(ring) %>% mutate(fraction = count / sum(count),
+                                       ymax = cumsum(fraction),
+                                       ymin = c(0,ymax[1:length(ymax)-1]))
+
+
+# Add x limits
+baseNum <- 4
+#numCat <- length(unique(dat.all$ring))
+dat.all$xmax <- as.numeric(dat.all$ring) + baseNum
+dat.all$xmin = dat.all$xmax -1
+
+
+# plot
+p.dmcs.all = ggplot(dat.all, aes(fill=Category,
+                             # alpha = ring,
+                             ymax=ymax, 
+                             ymin=ymin, 
+                             xmax=xmax, 
+                             xmin=xmin)) +
+  geom_rect() +
+  #geom_rect(colour="grey30") +
+  coord_polar(theta="y") +
+  xlim(c(0, 6)) +
+  theme_bw() +
+  theme(panel.grid=element_blank()) +
+  theme(axis.text=element_blank()) +
+  theme(axis.ticks=element_blank(),
+        panel.border = element_blank()) +
+  # labs(title="Customized ring plot") + 
+  scale_fill_brewer(palette = "Set1") +
+  scale_alpha_discrete(range = c(1,1))
+
+p.dmcs.all
+
+# G-test of enrichment of genomic feature
+# For null distribution
+# 32.83, 8.90, 13.19, 45.07
+
+# For DMCs
+# 11.56, 11.22, 24.24, 52.97 
+# promoter, exons, introns, intergenic regions
+
+library(DescTools)
+expected=c(0.4507,1-0.4507)
+observed=c(52.97,100-52.97)
+
+GTest(x=observed,
+      p=expected,
+      correct="none")
+# promoter, exons, introns, intergenic regions in DMCs comparing to null:
+# G = 24.527, X-squared df = 1, p-value = 7.328e-07 less
+# G = 0.61774, X-squared df = 1, p-value = 0.4319
+# G = 8.8726, X-squared df = 1, p-value = 0.002895 more
+# G = 2.5052, X-squared df = 1, p-value = 0.1135
+
+# Next check the overlap with sex DMCs in Metzger and Schulte 2018 Genome Biol Evol.
+sex_dmc=read.csv("stickleback_sex_dmcs_metzger.csv")
+sex_dmc$chr=gsub("chr", "", sex_dmc$chr)
+sex_dmc=sex_dmc[!sex_dmc$chr=="Un",] # remove dmcs on un chromosome
+sex_dmc$chr=as.roman(sex_dmc$chr)
+sex_dmc$chr=paste("group", sex_dmc$chr, sep = "")
+sex_dmc_granges=as(sex_dmc, "GRanges")
+
+dmcs_loc_granges=as(dmcs_loc, "GRanges")
+dmcs_in_sex_dmc=annotatePeakInBatch(dmcs_loc_granges, AnnotationData = sex_dmc_granges, output = "overlapping")
+dmcs_in_sex_dmc=data.frame(dmcs_in_sex_dmc)
+dmcs_in_sex_dmc$fromOverlappingOrNearest 
+# all NA, suggesting no DMCs indentified in our study are differentially methylated between sex
 
 # identify genes and GO terms associated with DMCs
 library(GenomicFeatures)
@@ -189,6 +296,14 @@ DMCs_gene=getBM(filters = "ensembl_gene_id",
                 attributes = c("ensembl_gene_id", "external_gene_name", "go_id", "name_1006",  "description"),  
                 values = unique(gene_in_DMCs$feature), 
                 mart = mart)
+
+##################
+# library(biomartr)
+# new_DMCs_gene=biomart(genes = unique(gene_in_DMCs$feature),
+#                      mart = "ENSEMBL_MART_ENSEMBL",
+#                      dataset = "gaculeatus_gene_ensembl",
+#                      attributes = c("external_gene_name", "go_id", "name_1006",  "description"),  
+#                     filters = "ensembl_gene_id")
 
 # Merge information of DMCs (ensembl gene id, symbol, description)
 DMCs_full_info=merge(DMCs_gene, gene_in_DMCs, by.x="ensembl_gene_id", by.y="feature")
